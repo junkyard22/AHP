@@ -10,25 +10,27 @@ export class TraceStore {
   /** Primary index: traceId → entry */
   private readonly entries = new Map<string, MailmanTraceEntry>();
 
-  /** Secondary index: packetId → traceId list */
-  private readonly byPacket = new Map<string, string[]>();
+  /** Secondary index: messageId → traceId list */
+  private readonly byMessage = new Map<string, string[]>();
 
-  /** Secondary index: taskId → traceId list */
-  private readonly byTask = new Map<string, string[]>();
+  /** Secondary index: conversationId → traceId list */
+  private readonly byConversation = new Map<string, string[]>();
 
   // ── Write ──────────────────────────────────
 
   record(
-    packetId: string,
-    taskId: string,
+    messageId: string,
+    conversationId: string,
     event: MailmanTraceEvent,
     actor: string,
     details?: Record<string, unknown>
   ): MailmanTraceEntry {
     const entry: MailmanTraceEntry = {
       traceId: newId("trace"),
-      packetId,
-      taskId,
+      messageId,
+      packetId: messageId,
+      conversationId,
+      taskId: conversationId,
       event,
       actor,
       timestamp: now(),
@@ -37,25 +39,35 @@ export class TraceStore {
 
     this.entries.set(entry.traceId, entry);
 
-    if (!this.byPacket.has(packetId)) this.byPacket.set(packetId, []);
-    this.byPacket.get(packetId)!.push(entry.traceId);
+    if (!this.byMessage.has(messageId)) this.byMessage.set(messageId, []);
+    this.byMessage.get(messageId)!.push(entry.traceId);
 
-    if (!this.byTask.has(taskId)) this.byTask.set(taskId, []);
-    this.byTask.get(taskId)!.push(entry.traceId);
+    if (!this.byConversation.has(conversationId)) {
+      this.byConversation.set(conversationId, []);
+    }
+    this.byConversation.get(conversationId)!.push(entry.traceId);
 
     return entry;
   }
 
   // ── Read ───────────────────────────────────
 
+  getByMessage(messageId: string): MailmanTraceEntry[] {
+    const ids = this.byMessage.get(messageId) ?? [];
+    return ids.map((id) => this.entries.get(id)!).filter(Boolean);
+  }
+
   getByPacket(packetId: string): MailmanTraceEntry[] {
-    const ids = this.byPacket.get(packetId) ?? [];
+    return this.getByMessage(packetId);
+  }
+
+  getByConversation(conversationId: string): MailmanTraceEntry[] {
+    const ids = this.byConversation.get(conversationId) ?? [];
     return ids.map((id) => this.entries.get(id)!).filter(Boolean);
   }
 
   getByTask(taskId: string): MailmanTraceEntry[] {
-    const ids = this.byTask.get(taskId) ?? [];
-    return ids.map((id) => this.entries.get(id)!).filter(Boolean);
+    return this.getByConversation(taskId);
   }
 
   all(): MailmanTraceEntry[] {
@@ -68,7 +80,7 @@ export class TraceStore {
 
   clear(): void {
     this.entries.clear();
-    this.byPacket.clear();
-    this.byTask.clear();
+    this.byMessage.clear();
+    this.byConversation.clear();
   }
 }

@@ -10,10 +10,10 @@ import { registerDoctor } from "./commands/doctor";
 const program = new Command();
 
 program
-  .name("mailman")
+  .name("postmaster")
   .description(
-    "Local communication runtime for multimodal agent apps.\n" +
-    "Passes structured, validated task packets between roles, tools, and services."
+    "Observable message runtime for AI agents.\n" +
+    "Checks, traces, and troubleshoots structured messages between agents, tools, and services."
   )
   .version("0.1.0");
 

@@ -1,10 +1,11 @@
 {
-  "name": "mailman",
+  "name": "postmaster",
   "version": "0.1.0",
-  "description": "A local communication runtime for multimodal agent apps that passes structured, validated task packets between roles, tools, and services.",
+  "description": "An observable message protocol and troubleshooting runtime for AI agents that checks, traces, and routes structured messages between agents, tools, and services.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
+    "postmaster": "dist/cli/main.js",
     "mailman": "dist/cli/main.js"
   },
   "scripts": {
@@ -15,7 +16,7 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
-  "keywords": ["agent", "router", "ipc", "multimodal", "runtime"],
+  "keywords": ["agent", "protocol", "messaging", "observability", "runtime", "multi-agent"],
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.0.0",

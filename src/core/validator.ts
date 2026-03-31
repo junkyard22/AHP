@@ -1,4 +1,10 @@
-import { MailmanPacket, ALL_PACKET_TYPES } from "../packet/types";
+import {
+  ALL_MESSAGE_TYPES,
+  MailmanMessage,
+  REPLY_LIKE_MESSAGE_TYPES,
+  SUPPORTED_PROTOCOL_VERSIONS,
+} from "../packet/types";
+import { normalizeMessage } from "../packet/createPacket";
 import { MailmanError, ErrorCode } from "./errors";
 import { Registry } from "./registry";
 
@@ -17,29 +23,32 @@ export type ValidationResult =
 export class Validator {
   constructor(private readonly registry: Registry) {}
 
-  validate(packet: MailmanPacket): ValidationResult {
+  validate(packet: MailmanMessage): ValidationResult {
+    const message = normalizeMessage(packet);
+
     // Required string fields
-    const requiredStrings: (keyof MailmanPacket)[] = [
-      "packetId",
-      "taskId",
-      "type",
-      "sender",
-      "target",
+    const requiredStrings = [
+      { field: "messageId", value: message.messageId },
+      { field: "conversationId", value: message.conversationId },
+      { field: "type", value: message.type },
+      { field: "sender", value: message.sender },
+      { field: "target", value: message.target },
+      { field: "protocol", value: message.protocol },
     ];
 
     for (const field of requiredStrings) {
-      const value = packet[field];
+      const value = field.value;
       if (value === undefined || value === null || value === "") {
         return {
           ok: false,
           code: ErrorCode.INVALID_PACKET,
-          message: `Missing required field: ${field}`,
+          message: `Missing required field: ${field.field}`,
         };
       }
     }
 
-    // payload must exist (can be empty object)
-    if (packet.payload === undefined || packet.payload === null) {
+    // payload must exist (can be an empty object)
+    if (message.payload === undefined || message.payload === null) {
       return {
         ok: false,
         code: ErrorCode.INVALID_PACKET,
@@ -47,46 +56,67 @@ export class Validator {
       };
     }
 
-    // type must be a known PacketType
-    if (!ALL_PACKET_TYPES.includes(packet.type)) {
+    // type must be known
+    if (!ALL_MESSAGE_TYPES.includes(message.type)) {
       return {
         ok: false,
         code: ErrorCode.INVALID_PACKET,
-        message: `Unknown packet type: ${packet.type}`,
+        message: `Unknown message type: ${message.type}`,
       };
     }
 
     // confidence must be 0–1 if present
-    if (packet.confidence !== undefined) {
+    if (message.confidence !== undefined) {
       if (
-        typeof packet.confidence !== "number" ||
-        packet.confidence < 0 ||
-        packet.confidence > 1
+        typeof message.confidence !== "number" ||
+        message.confidence < 0 ||
+        message.confidence > 1
       ) {
         return {
           ok: false,
           code: ErrorCode.INVALID_PACKET,
-          message: `confidence must be a number between 0 and 1 (got ${packet.confidence})`,
+          message: `confidence must be a number between 0 and 1 (got ${message.confidence})`,
         };
       }
     }
 
-    // target must be registered
-    const role = this.registry.get(packet.target);
-    if (!role) {
+    const target = this.registry.get(message.target);
+    if (!target) {
       return {
         ok: false,
         code: ErrorCode.UNKNOWN_TARGET,
-        message: `Target not registered: ${packet.target}`,
+        message: `Target agent not registered: ${message.target}`,
       };
     }
 
-    // type must be accepted by target
-    if (!role.registration.accepts.includes(packet.type)) {
+    if (!target.registration.accepts.includes(message.type)) {
       return {
         ok: false,
         code: ErrorCode.TARGET_REJECTS_TYPE,
-        message: `Target "${packet.target}" does not accept type "${packet.type}"`,
+        message: `Target "${message.target}" does not accept type "${message.type}"`,
+      };
+    }
+
+    const supportedProtocols = target.registration.protocols ?? [
+      ...SUPPORTED_PROTOCOL_VERSIONS,
+    ];
+    if (!supportedProtocols.includes(message.protocol)) {
+      return {
+        ok: false,
+        code: ErrorCode.TARGET_REJECTS_PROTOCOL,
+        message: `Target "${message.target}" does not support protocol "${message.protocol}"`,
+      };
+    }
+
+    if (
+      REPLY_LIKE_MESSAGE_TYPES.includes(message.type) &&
+      !message.replyTo &&
+      !message.parentPacketId
+    ) {
+      return {
+        ok: false,
+        code: ErrorCode.INVALID_REPLY,
+        message: `Reply-like message type "${message.type}" requires replyTo`,
       };
     }
 
@@ -98,7 +128,7 @@ export class Validator {
  * Convenience assertion — throws MailmanError on failure.
  */
 export function assertValid(
-  packet: MailmanPacket,
+  packet: MailmanMessage,
   registry: Registry
 ): void {
   const result = new Validator(registry).validate(packet);

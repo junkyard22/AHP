@@ -10,37 +10,47 @@ const HEALTH_ICONS: Record<string, string> = {
 
 export function registerRoles(program: Command): void {
   program
-    .command("roles")
-    .description("List registered roles and their health")
+    .command("agents")
+    .alias("roles")
+    .description("List registered agents and their health")
     .action(() => {
       const runtime = getRuntime();
-      const roles = runtime.listRoles();
+      const agents = runtime.listAgents();
 
-      if (roles.length === 0) {
-        console.log("[mailman] No roles registered.");
+      if (agents.length === 0) {
+        console.log("[postmaster] No agents registered.");
         return;
       }
 
       console.log("");
-      console.log(`  Registered Roles (${roles.length})`);
+      console.log(`  Registered Agents (${agents.length})`);
       console.log("  ──────────────────────────────────────────────────");
 
-      for (const role of roles) {
-        const icon = HEALTH_ICONS[role.health ?? "unknown"];
-        const health = role.health ?? "unknown";
-        const version = role.version ? `  v${role.version}` : "";
-        console.log(`  ${icon} ${role.name}${version}  [${health}]`);
+      for (const agent of agents) {
+        const icon = HEALTH_ICONS[agent.health ?? "unknown"];
+        const health = agent.health ?? "unknown";
+        const version = agent.version ? `  v${agent.version}` : "";
+        const kind = agent.kind ? `  (${agent.kind})` : "";
+        console.log(`  ${icon} ${agent.name}${version}${kind}  [${health}]`);
 
-        if (role.description) {
-          console.log(`      ${role.description}`);
+        if (agent.description) {
+          console.log(`      ${agent.description}`);
         }
 
-        if (role.accepts.length > 0) {
-          console.log(`      accepts: ${role.accepts.join(", ")}`);
+        if (agent.accepts.length > 0) {
+          console.log(`      accepts: ${agent.accepts.join(", ")}`);
         }
 
-        if (role.intents && role.intents.length > 0) {
-          console.log(`      intents: ${role.intents.join(", ")}`);
+        if (agent.capabilities && agent.capabilities.length > 0) {
+          console.log(`      capabilities: ${agent.capabilities.join(", ")}`);
+        }
+
+        if (agent.intents && agent.intents.length > 0) {
+          console.log(`      intents: ${agent.intents.join(", ")}`);
+        }
+
+        if (agent.protocols && agent.protocols.length > 0) {
+          console.log(`      protocols: ${agent.protocols.join(", ")}`);
         }
 
         console.log("");
