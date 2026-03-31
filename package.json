@@ -1,0 +1,29 @@
+{
+  "name": "mailman",
+  "version": "0.1.0",
+  "description": "A local communication runtime for multimodal agent apps that passes structured, validated task packets between roles, tools, and services.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "mailman": "dist/cli/main.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/cli/main.js start",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "keywords": ["agent", "router", "ipc", "multimodal", "runtime"],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "uuid": "^9.0.0",
+    "@types/uuid": "^9.0.0"
+  }
+}
