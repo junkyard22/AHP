@@ -33,7 +33,17 @@
     "clean": "rimraf dist",
     "prepublishOnly": "pnpm run typecheck && pnpm run test && pnpm run build"
   },
-  "keywords": ["agent", "multiagent", "messaging", "router", "ipc", "multimodal", "runtime", "protocol", "llm"],
+  "keywords": [
+    "agent",
+    "multiagent",
+    "messaging",
+    "router",
+    "ipc",
+    "multimodal",
+    "runtime",
+    "protocol",
+    "llm"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -44,7 +54,7 @@
     "url": "https://github.com/junkyard22/mailman/issues"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^25.5.0",
     "@vitest/coverage-v8": "^1.6.0",
     "rimraf": "^5.0.0",
     "typescript": "^5.4.0",

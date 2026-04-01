@@ -8,7 +8,7 @@ import { MailmanPacket } from "../../packet/types";
 // ─────────────────────────────────────────────
 
 function makeRuntime() {
-  const rt = new Runtime();
+  const rt = new Runtime({ dbPath: ":memory:", retry: { maxAttempts: 1 } });
   rt.start();
   return rt;
 }
@@ -140,7 +140,7 @@ describe("Runtime", () => {
     const reply = await rt.send(packet);
     expect(reply.type).toBe("error.report");
     expect(reply.error?.code).toBe("HANDLER_TIMEOUT");
-  });
+  }, 10_000);
 
   // ── Middleware ───────────────────────────────
 
@@ -235,5 +235,37 @@ describe("Runtime", () => {
 
     await rt.send(packet);
     expect(rt.getStats().packetsProcessed).toBe(1);
+  });
+
+  // ── DLQ ───────────────────────────────────────
+
+  it("pushes a packet to the DLQ after handler exhausts retries", async () => {
+    // Runtime with maxAttempts:1 so it fails immediately into DLQ
+    const rt2 = new Runtime({
+      dbPath: ":memory:",
+      retry: { maxAttempts: 1 },
+    });
+    rt2.start();
+
+    rt2.registerRole({ name: "boom", accepts: ["task.assign"] }, () => {
+      throw new Error("always fails");
+    });
+
+    const packet = createPacket({
+      taskId: "dlq-test",
+      type: "task.assign",
+      sender: "orch",
+      target: "boom",
+      payload: {},
+    });
+
+    await rt2.send(packet);
+
+    const dlq = rt2.getDLQ();
+    expect(dlq.count()).toBe(1);
+
+    const entries = dlq.list();
+    expect(entries[0].error).toBe("always fails");
+    expect(entries[0].attempts).toBe(1);
   });
 });

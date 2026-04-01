@@ -6,6 +6,7 @@ import { registerStatus } from "./commands/status";
 import { registerRoles } from "./commands/roles";
 import { registerInspect } from "./commands/inspect";
 import { registerDoctor } from "./commands/doctor";
+import { registerDlqCommand } from "./commands/dlq";
 
 const program = new Command();
 
@@ -22,5 +23,6 @@ registerStatus(program);
 registerRoles(program);
 registerInspect(program);
 registerDoctor(program);
+registerDlqCommand(program);
 
 program.parse(process.argv);

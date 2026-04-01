@@ -10,16 +10,44 @@ import { TraceStore } from "./traceStore";
 import { Validator } from "./validator";
 import { ErrorCode, MailmanError } from "./errors";
 import { MiddlewareFn, composeMiddleware } from "./middleware";
+import { DeadLetterQueue } from "./dlq";
+import {
+  RetryPolicy,
+  DEFAULT_RETRY_POLICY,
+  withRetry,
+} from "./retry";
+import { DEFAULT_DB_PATH } from "./db";
 import { newPacketId } from "../utils/ids";
 import { now } from "../utils/time";
 
 // ─────────────────────────────────────────────
-//  Runtime state
+//  Runtime config
+// ─────────────────────────────────────────────
+
+export interface RuntimeConfig {
+  /**
+   * Path to the SQLite database file.
+   * Defaults to ~/.mailman/traces.db so traces persist across restarts.
+   * Pass ':memory:' for ephemeral / test usage.
+   */
+  dbPath?: string;
+
+  /**
+   * Retry policy for handler failures.
+   * Merged with DEFAULT_RETRY_POLICY so you only need to override what you want.
+   */
+  retry?: Partial<RetryPolicy>;
+}
+
+// ─────────────────────────────────────────────
+//  Runtime stats
 // ─────────────────────────────────────────────
 
 interface RuntimeStats {
   packetsProcessed: number;
   packetsFailed: number;
+  packetsRetried: number;
+  packetsDeadLettered: number;
   startedAt: string | null;
 }
 
@@ -32,20 +60,27 @@ export class Runtime {
   private readonly router: Router;
   private readonly traceStore: TraceStore;
   private readonly validator: Validator;
+  private readonly dlq: DeadLetterQueue;
   private readonly middleware: MiddlewareFn[] = [];
+  private readonly retryPolicy: RetryPolicy;
 
   private running = false;
   private stats: RuntimeStats = {
     packetsProcessed: 0,
     packetsFailed: 0,
+    packetsRetried: 0,
+    packetsDeadLettered: 0,
     startedAt: null,
   };
 
-  constructor() {
+  constructor(config: RuntimeConfig = {}) {
+    const dbPath = config.dbPath ?? DEFAULT_DB_PATH;
     this.registry = new Registry();
     this.router = new Router(this.registry);
-    this.traceStore = new TraceStore();
+    this.traceStore = new TraceStore(dbPath);
+    this.dlq = new DeadLetterQueue(dbPath);
     this.validator = new Validator(this.registry);
+    this.retryPolicy = { ...DEFAULT_RETRY_POLICY, ...(config.retry ?? {}) };
   }
 
   // ── Lifecycle ─────────────────────────────
@@ -130,41 +165,77 @@ export class Runtime {
       target: packet.target,
     });
 
-    // 5. call handler (through middleware chain)
+    // 5. call handler (through middleware chain) with retry
     this.traceStore.record(packetId, taskId, "handler.started", packet.target);
-
-    let response: MailmanPacket;
 
     const coreDispatch = (pkt: MailmanPacket) => this.router.dispatch(pkt);
     const pipeline = composeMiddleware(this.middleware, coreDispatch);
 
-    try {
-      // Respect optional timeout
-      const timeoutMs = packet.meta?.timeoutMs;
-      if (timeoutMs && timeoutMs > 0) {
-        response = await this.withTimeout(pipeline(packet), timeoutMs, packet);
-      } else {
-        response = await pipeline(packet);
-      }
-    } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : "Handler threw an unknown error";
+    // Determine effective retry policy (packet-level override possible via meta)
+    const retryPolicy: RetryPolicy = {
+      ...this.retryPolicy,
+    };
+
+    let response: MailmanPacket;
+
+    const outcome = await withRetry(
+      () => {
+        const timeoutMs = packet.meta?.timeoutMs;
+        if (timeoutMs && timeoutMs > 0) {
+          return this.withTimeout(pipeline(packet), timeoutMs, packet);
+        }
+        return pipeline(packet);
+      },
+      retryPolicy
+    );
+
+    if (!outcome.ok) {
+      const err = outcome.error;
+      const msg = err.message ?? "Handler threw an unknown error";
       const code =
         err instanceof MailmanError ? err.code : ErrorCode.HANDLER_THREW;
+
+      const attempts = outcome.attempts;
+
+      // Track retries in stats
+      if (attempts > 1) {
+        this.stats.packetsRetried += attempts - 1;
+      }
 
       this.traceStore.record(packetId, taskId, "handler.threw", packet.target, {
         error: msg,
         code,
+        attempts,
       });
 
-      this.traceStore.record(packetId, taskId, "packet.failed", "mailman");
-      this.stats.packetsFailed++;
+      // Push to DLQ after exhausting retries
+      this.dlq.push(packet, msg, attempts);
+      this.stats.packetsDeadLettered++;
 
-      return this.buildErrorPacket(packet, code, msg);
+      this.traceStore.record(packetId, taskId, "packet.failed", "mailman", {
+        deadLettered: true,
+        attempts,
+      });
+
+      this.stats.packetsFailed++;
+      return this.buildErrorPacket(packet, code, msg, { attempts });
     }
 
-    // 6. completed
-    this.traceStore.record(packetId, taskId, "handler.finished", packet.target);
+    response = outcome.result;
+
+    if (outcome.attempts > 1) {
+      this.stats.packetsRetried += outcome.attempts - 1;
+      this.traceStore.record(
+        packetId,
+        taskId,
+        "handler.finished",
+        packet.target,
+        { attempts: outcome.attempts }
+      );
+    } else {
+      this.traceStore.record(packetId, taskId, "handler.finished", packet.target);
+    }
+
     this.traceStore.record(packetId, taskId, "packet.completed", "mailman");
     this.stats.packetsProcessed++;
 
@@ -208,6 +279,12 @@ export class Runtime {
 
   allTraces(): MailmanTraceEntry[] {
     return this.traceStore.all();
+  }
+
+  // ── DLQ access ────────────────────────────
+
+  getDLQ() {
+    return this.dlq;
   }
 
   // ── Stats ─────────────────────────────────
@@ -272,9 +349,9 @@ export class Runtime {
 
 let _instance: Runtime | null = null;
 
-export function getRuntime(): Runtime {
+export function getRuntime(config?: RuntimeConfig): Runtime {
   if (!_instance) {
-    _instance = new Runtime();
+    _instance = new Runtime(config);
   }
   return _instance;
 }
