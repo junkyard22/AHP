@@ -9,6 +9,7 @@ import { Router } from "./router";
 import { TraceStore } from "./traceStore";
 import { Validator } from "./validator";
 import { ErrorCode, MailmanError } from "./errors";
+import { MiddlewareFn, composeMiddleware } from "./middleware";
 import { newPacketId } from "../utils/ids";
 import { now } from "../utils/time";
 
@@ -31,6 +32,7 @@ export class Runtime {
   private readonly router: Router;
   private readonly traceStore: TraceStore;
   private readonly validator: Validator;
+  private readonly middleware: MiddlewareFn[] = [];
 
   private running = false;
   private stats: RuntimeStats = {
@@ -60,6 +62,25 @@ export class Runtime {
 
   isRunning(): boolean {
     return this.running;
+  }
+
+  // ── Middleware ────────────────────────────
+
+  /**
+   * Register a middleware function. Middleware runs in insertion order,
+   * wrapping the core dispatch. Useful for logging, auth, metrics, etc.
+   *
+   * @example
+   * runtime.use(async (packet, next) => {
+   *   console.log("→", packet.type);
+   *   const reply = await next();
+   *   console.log("←", reply.type);
+   *   return reply;
+   * });
+   */
+  use(fn: MiddlewareFn): this {
+    this.middleware.push(fn);
+    return this;
   }
 
   // ── Role management ───────────────────────
@@ -109,22 +130,21 @@ export class Runtime {
       target: packet.target,
     });
 
-    // 5. call handler
+    // 5. call handler (through middleware chain)
     this.traceStore.record(packetId, taskId, "handler.started", packet.target);
 
     let response: MailmanPacket;
+
+    const coreDispatch = (pkt: MailmanPacket) => this.router.dispatch(pkt);
+    const pipeline = composeMiddleware(this.middleware, coreDispatch);
 
     try {
       // Respect optional timeout
       const timeoutMs = packet.meta?.timeoutMs;
       if (timeoutMs && timeoutMs > 0) {
-        response = await this.withTimeout(
-          this.router.dispatch(packet),
-          timeoutMs,
-          packet
-        );
+        response = await this.withTimeout(pipeline(packet), timeoutMs, packet);
       } else {
-        response = await this.router.dispatch(packet);
+        response = await pipeline(packet);
       }
     } catch (err: unknown) {
       const msg =
