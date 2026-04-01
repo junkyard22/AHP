@@ -33,9 +33,10 @@ async function workerHandler(packet: MailmanPacket): Promise<MailmanPacket> {
 // ─────────────────────────────────────────────
 
 async function reviewerHandler(packet: MailmanPacket): Promise<MailmanPacket> {
-  console.log(`  [reviewer] reviewing result: "${packet.payload.result}"`);
+  const workerResult = String(packet.payload.workerResult ?? packet.payload.result ?? "");
+  console.log(`  [reviewer] reviewing result: "${workerResult}"`);
 
-  const approved = String(packet.payload.result).length > 0;
+  const approved = workerResult.length > 0;
   return createReply(packet, "review.result", "reviewer", {
     approved,
     notes: approved ? "Looks good." : "Empty result — rejected.",
