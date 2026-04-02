@@ -60,6 +60,16 @@ export function openDb(dbPath: string = DEFAULT_DB_PATH): DatabaseSyncType {
     );
 
     CREATE INDEX IF NOT EXISTS idx_dlq_last_seen ON dead_letter_queue(last_seen);
+
+    CREATE TABLE IF NOT EXISTS scheduled_packets (
+      id          TEXT    PRIMARY KEY,
+      packet      TEXT    NOT NULL,
+      deliver_at  INTEGER NOT NULL,
+      interval_ms INTEGER,
+      created_at  TEXT    NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sched_deliver_at ON scheduled_packets(deliver_at);
   `);
 
   return db;

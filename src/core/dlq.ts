@@ -84,10 +84,11 @@ export class DeadLetterQueue {
 
   // ── Remove ─────────────────────────────────
 
-  remove(id: string): void {
-    this.db
+  remove(id: string): boolean {
+    const result = this.db
       .prepare("DELETE FROM dead_letter_queue WHERE id = ?")
       .run(id);
+    return (result as { changes: number }).changes > 0;
   }
 
   clear(): void {

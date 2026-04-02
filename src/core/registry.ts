@@ -57,4 +57,27 @@ export class Registry {
   size(): number {
     return this.entries.size;
   }
+
+  // ── Capability queries ────────────────────
+
+  /**
+   * Find all roles that advertise a specific capability.
+   * Used by runtime.sendToCapability() for dynamic routing.
+   */
+  findByCapability(capability: string): RegistryEntry[] {
+    return Array.from(this.entries.values()).filter(
+      (e) => e.registration.capabilities?.includes(capability) ?? false
+    );
+  }
+
+  /**
+   * Find all roles that advertise ALL of the given capabilities.
+   */
+  findByCapabilities(capabilities: string[]): RegistryEntry[] {
+    return Array.from(this.entries.values()).filter((e) =>
+      capabilities.every(
+        (cap) => e.registration.capabilities?.includes(cap) ?? false
+      )
+    );
+  }
 }

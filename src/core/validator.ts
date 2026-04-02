@@ -1,4 +1,4 @@
-import { MailmanPacket, ALL_PACKET_TYPES } from "../packet/types";
+import { MailmanPacket, BUILTIN_PACKET_TYPES } from "../packet/types";
 import { MailmanError, ErrorCode } from "./errors";
 import { Registry } from "./registry";
 
@@ -15,7 +15,14 @@ export type ValidationResult =
 // ─────────────────────────────────────────────
 
 export class Validator {
-  constructor(private readonly registry: Registry) {}
+  /**
+   * @param registry   Role registry — used to verify target exists and accepts the type.
+   * @param customTypes Extra packet types registered by the user via runtime.registerPacketType().
+   */
+  constructor(
+    private readonly registry: Registry,
+    private readonly customTypes: Set<string> = new Set()
+  ) {}
 
   validate(packet: MailmanPacket): ValidationResult {
     // Required string fields
@@ -47,12 +54,15 @@ export class Validator {
       };
     }
 
-    // type must be a known PacketType
-    if (!ALL_PACKET_TYPES.includes(packet.type)) {
+    // type must be a known built-in OR a user-registered custom type
+    const isBuiltin = (BUILTIN_PACKET_TYPES as string[]).includes(packet.type);
+    const isCustom  = this.customTypes.has(packet.type);
+
+    if (!isBuiltin && !isCustom) {
       return {
         ok: false,
         code: ErrorCode.INVALID_PACKET,
-        message: `Unknown packet type: ${packet.type}`,
+        message: `Unknown packet type: "${packet.type}". Register custom types with runtime.registerPacketType()`,
       };
     }
 
@@ -99,9 +109,10 @@ export class Validator {
  */
 export function assertValid(
   packet: MailmanPacket,
-  registry: Registry
+  registry: Registry,
+  customTypes?: Set<string>
 ): void {
-  const result = new Validator(registry).validate(packet);
+  const result = new Validator(registry, customTypes).validate(packet);
   if (!result.ok) {
     throw new MailmanError(result.code, result.message);
   }
