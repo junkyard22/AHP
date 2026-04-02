@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "paths": {
+      "@junkyard22/mailman": ["./src/index.ts"],
+      "@junkyard22/mailman/dist/utils/ids": ["./src/utils/ids.ts"],
+      "@junkyard22/mailman/*": ["./src/*"]
+    }
+  },
+  "include": ["src/**/*", "orca-poc.ts"]
+}
