@@ -22,7 +22,7 @@
     "mailman": "dist/cli/main.js"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.5.0"
   },
   "scripts": {
     "build": "tsc",
@@ -70,5 +70,10 @@
   },
   "optionalDependencies": {
     "@types/ws": "^8.5.13"
+  },
+  "pnpm": {
+    "overrides": {
+      "esbuild": ">=0.25.0"
+    }
   }
 }
