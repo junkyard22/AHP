@@ -1,7 +1,8 @@
 // node:sqlite is built into Node.js 22+
 // No external dependency — no native binary issues in any environment
+// Lazy-loaded inside openDb() so environments that only use MemoryTraceStore
+// (e.g. Electron 29 / Node 20) can import Mailman without crashing.
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
-const { DatabaseSync } = require("node:sqlite");
 import path from "path";
 import os from "os";
 import fs from "fs";
@@ -24,6 +25,7 @@ export const DEFAULT_DB_PATH = path.join(
 // ─────────────────────────────────────────────
 
 export function openDb(dbPath: string = DEFAULT_DB_PATH): DatabaseSyncType {
+  const { DatabaseSync } = require("node:sqlite");
   if (dbPath !== ":memory:") {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   }

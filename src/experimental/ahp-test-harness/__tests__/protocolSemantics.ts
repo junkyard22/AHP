@@ -1,0 +1,408 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { MemoryDLQStore, MemoryTraceStore } from "../../../core/backends";
+import { Runtime } from "../../../core/runtime";
+import { createAHPTestEnvelope } from "../envelopes";
+import { AHPTestHarnessOptions, WorkbenchTestHarness } from "../WorkbenchTestHarness";
+import { AHPEnvelope, AHPTestEvent } from "../index";
+
+type HarnessFactory = (
+  options?: AHPTestHarnessOptions
+) => WorkbenchTestHarness | null | Promise<WorkbenchTestHarness | null>;
+
+async function waitForEvent(
+  events: AHPTestEvent[],
+  predicate: (event: AHPTestEvent) => boolean,
+  timeoutMs = 700
+): Promise<AHPTestEvent> {
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    const found = events.find(predicate);
+    if (found) {
+      return found;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  throw new Error("Timed out waiting for AHP test event");
+}
+
+export function defineProtocolSemanticsSuite(
+  label: string,
+  createHarness: HarnessFactory,
+  options: { includeDefaultOff?: boolean } = {}
+): void {
+  describe(label, () => {
+    const liveHarnesses: WorkbenchTestHarness[] = [];
+
+    async function makeHarness(
+      overrides: AHPTestHarnessOptions = {}
+    ): Promise<WorkbenchTestHarness> {
+      const harness = await createHarness({
+        enabled: true,
+        timeouts: {
+          handshakeTimeoutMs: 100,
+          taskAckTimeoutMs: 40,
+          inactivityTimeoutMs: 250,
+          maxIdempotentRetries: 2,
+          ...(overrides.timeouts ?? {}),
+        },
+        ...overrides,
+      });
+
+      if (!harness) {
+        throw new Error("Expected AHP test harness to be enabled");
+      }
+
+      liveHarnesses.push(harness);
+      return harness;
+    }
+
+    afterEach(async () => {
+      await Promise.all(liveHarnesses.splice(0).map((harness) => harness.close()));
+    });
+
+    if (options.includeDefaultOff ?? true) {
+      it("keeps production behavior unchanged when AHP_TEST_MODE is disabled", async () => {
+        const runtime = new Runtime({
+          traceStore: new MemoryTraceStore(),
+          dlq: new MemoryDLQStore(),
+        });
+        runtime.start();
+
+        const harness = await createHarness({ env: {} });
+
+        expect(harness).toBeNull();
+        expect(runtime.isRunning()).toBe(true);
+        expect(runtime.listRoles()).toEqual([]);
+        expect(runtime.getStats().packetsProcessed).toBe(0);
+      });
+    }
+
+    it("verifies routing, addressing, correlation, and request/response semantics", async () => {
+      const harness = await makeHarness();
+      const events: AHPTestEvent[] = [];
+      let taskEnvelope: AHPEnvelope | undefined;
+
+      harness.maestro.onEvent((event) => events.push(event));
+      await harness.maestro.connect({ sessionId: "session-routing" });
+      await harness.maestro.registerAgent({
+        agentId: "agent-writer",
+        handler: (envelope, context) => {
+          taskEnvelope = envelope;
+          context.accept({ stage: "accepted" });
+          context.complete({ output: "done" });
+        },
+      });
+
+      await harness.maestro.sendTask({
+        taskId: "task-routing-1",
+        agentId: "agent-writer",
+        prompt: "route this",
+      });
+
+      await waitForEvent(events, (event) => event.taskId === "task-routing-1" && event.eventType === "TASK_COMPLETED");
+
+      const taskEvents = events.filter((event) => event.taskId === "task-routing-1");
+      expect(taskEnvelope?.sender).toBe("workbench-test-harness");
+      expect(taskEnvelope?.target).toBe("agent-writer");
+      expect(taskEnvelope?.correlationId).toBe("task-routing-1");
+      expect(taskEvents.map((event) => event.eventType)).toEqual([
+        "TASK_ACCEPTED",
+        "TASK_COMPLETED",
+      ]);
+      expect(taskEvents.every((event) => event.correlationId === "task-routing-1")).toBe(true);
+
+      const trace = harness.traceTask("task-routing-1");
+      expect(trace.map((entry) => entry.direction)).toEqual(expect.arrayContaining([
+        "maestro->workbench",
+        "workbench->ahp",
+        "ahp->workbench",
+        "workbench->maestro",
+      ]));
+    });
+
+    it("streams progress and partial outputs in sequence order", async () => {
+      const harness = await makeHarness();
+      const events: AHPTestEvent[] = [];
+
+      harness.maestro.onEvent((event) => events.push(event));
+      await harness.maestro.connect({ sessionId: "session-stream" });
+      await harness.maestro.registerAgent({
+        agentId: "agent-streamer",
+        handler: (_envelope, context) => {
+          context.accept({ stage: "accepted" });
+          context.progress({ percent: 10 });
+          context.partialOutput({ chunk: "Hel" });
+          context.partialOutput({ chunk: "lo" });
+          context.complete({ output: "Hello" });
+        },
+      });
+
+      await harness.maestro.sendTask({
+        taskId: "task-stream-1",
+        agentId: "agent-streamer",
+        prompt: "stream this",
+      });
+
+      await waitForEvent(events, (event) => event.taskId === "task-stream-1" && event.eventType === "TASK_COMPLETED");
+
+      const taskEvents = events.filter((event) => event.taskId === "task-stream-1");
+      expect(taskEvents.map((event) => event.eventType)).toEqual([
+        "TASK_ACCEPTED",
+        "TASK_PROGRESS",
+        "TASK_PARTIAL_OUTPUT",
+        "TASK_PARTIAL_OUTPUT",
+        "TASK_COMPLETED",
+      ]);
+      expect(taskEvents.map((event) => event.sequence)).toEqual([1, 2, 3, 4, 5]);
+      expect(taskEvents
+        .filter((event) => event.eventType === "TASK_PARTIAL_OUTPUT")
+        .map((event) => event.payload?.chunk)).toEqual(["Hel", "lo"]);
+    });
+
+    it("propagates task errors back to Maestro test mode", async () => {
+      const harness = await makeHarness();
+      const events: AHPTestEvent[] = [];
+
+      harness.maestro.onEvent((event) => events.push(event));
+      await harness.maestro.connect({ sessionId: "session-error" });
+      await harness.maestro.registerAgent({
+        agentId: "agent-error",
+        handler: (_envelope, context) => {
+          context.accept({ stage: "accepted" });
+          context.fail({
+            code: "DOWNSTREAM_ERROR",
+            message: "Agent blew up",
+          });
+        },
+      });
+
+      await harness.maestro.sendTask({
+        taskId: "task-error-1",
+        agentId: "agent-error",
+        prompt: "fail this",
+      });
+
+      const failure = await waitForEvent(
+        events,
+        (event) => event.taskId === "task-error-1" && event.eventType === "TASK_FAILED"
+      );
+
+      expect(failure.error).toEqual({
+        code: "DOWNSTREAM_ERROR",
+        message: "Agent blew up",
+      });
+    });
+
+    it("propagates cancellation mid-stream and keeps cancel idempotent", async () => {
+      const harness = await makeHarness();
+      const events: AHPTestEvent[] = [];
+
+      harness.maestro.onEvent((event) => events.push(event));
+      await harness.maestro.connect({ sessionId: "session-cancel" });
+      await harness.maestro.registerAgent({
+        agentId: "agent-cancel",
+        handler: async (_envelope, context) => {
+          context.accept({ stage: "accepted" });
+          context.progress({ percent: 25 });
+          await new Promise<void>((resolve) => {
+            context.signal.addEventListener("abort", () => {
+              context.cancelled({ reason: "cancelled in handler" });
+              resolve();
+            }, { once: true });
+          });
+        },
+      });
+
+      await harness.maestro.sendTask({
+        taskId: "task-cancel-1",
+        agentId: "agent-cancel",
+        prompt: "cancel this",
+      });
+
+      await waitForEvent(events, (event) => event.taskId === "task-cancel-1" && event.eventType === "TASK_PROGRESS");
+
+      await harness.maestro.cancelTask("task-cancel-1");
+      await harness.maestro.cancelTask("task-cancel-1");
+
+      await waitForEvent(events, (event) => event.taskId === "task-cancel-1" && event.eventType === "TASK_CANCELLED");
+
+      expect(events.filter((event) => event.taskId === "task-cancel-1" && event.eventType === "TASK_CANCELLED")).toHaveLength(1);
+    });
+
+    it("reconnects after a Workbench restart and resumes agent routing", async () => {
+      const harness = await makeHarness();
+      const events: AHPTestEvent[] = [];
+
+      harness.maestro.onEvent((event) => events.push(event));
+      await harness.maestro.connect({ sessionId: "session-reconnect" });
+      await harness.maestro.registerAgent({
+        agentId: "agent-reconnect",
+        handler: (_envelope, context) => {
+          context.accept({ stage: "accepted" });
+          context.complete({ output: "ok" });
+        },
+      });
+
+      await waitForEvent(events, (event) => event.taskId === "agent:agent-reconnect" && event.eventType === "AGENT_ONLINE");
+
+      await harness.restart();
+      await waitForEvent(events, (event) => event.taskId === "agent:agent-reconnect" && event.eventType === "AGENT_OFFLINE");
+
+      await harness.maestro.connect({ sessionId: "session-reconnect" });
+      await waitForEvent(
+        events,
+        (event) =>
+          event.taskId === "agent:agent-reconnect" &&
+          event.eventType === "AGENT_ONLINE" &&
+          events.filter(
+            (candidate) =>
+              candidate.taskId === "agent:agent-reconnect" &&
+              candidate.eventType === "AGENT_ONLINE"
+          ).length >= 2
+      );
+
+      await harness.maestro.sendTask({
+        taskId: "task-reconnect-1",
+        agentId: "agent-reconnect",
+        prompt: "after restart",
+      });
+
+      await waitForEvent(events, (event) => event.taskId === "task-reconnect-1" && event.eventType === "TASK_COMPLETED");
+    });
+
+    it("deduplicates duplicate inbound AHP messages by messageId", async () => {
+      const harness = await makeHarness();
+      const events: AHPTestEvent[] = [];
+      let acceptEnvelope: AHPEnvelope | undefined;
+
+      harness.maestro.onEvent((event) => events.push(event));
+      await harness.maestro.connect({ sessionId: "session-dedupe" });
+      await harness.maestro.registerAgent({
+        agentId: "agent-dedupe",
+        handler: (_envelope, context) => {
+          acceptEnvelope = context.accept({ once: true });
+          setTimeout(() => {
+            context.complete({ output: "done" });
+          }, 10);
+        },
+      });
+
+      await harness.maestro.sendTask({
+        taskId: "task-dedupe-1",
+        agentId: "agent-dedupe",
+        prompt: "dedupe this",
+      });
+
+      await waitForEvent(events, (event) => event.taskId === "task-dedupe-1" && event.eventType === "TASK_ACCEPTED");
+      await harness.injectEnvelope(acceptEnvelope as AHPEnvelope);
+      await waitForEvent(events, (event) => event.taskId === "task-dedupe-1" && event.eventType === "TASK_COMPLETED");
+
+      expect(events.filter((event) => event.taskId === "task-dedupe-1" && event.eventType === "TASK_ACCEPTED")).toHaveLength(1);
+    });
+
+    it("ignores late out-of-order non-terminal envelopes after terminal delivery", async () => {
+      const harness = await makeHarness();
+      const events: AHPTestEvent[] = [];
+      let outbound: AHPEnvelope | undefined;
+
+      harness.maestro.onEvent((event) => events.push(event));
+      await harness.maestro.connect({ sessionId: "session-out-of-order" });
+      await harness.maestro.registerAgent({
+        agentId: "agent-out-of-order",
+        handler: (envelope) => {
+          outbound = envelope;
+        },
+      });
+
+      await harness.maestro.sendTask({
+        taskId: "task-out-of-order-1",
+        agentId: "agent-out-of-order",
+        prompt: "deliver terminal first",
+      });
+
+      await waitForEvent(events, (event) => event.taskId === "agent:agent-out-of-order" && event.eventType === "AGENT_ONLINE");
+
+      await harness.injectEnvelope(
+        createAHPTestEnvelope({
+          kind: "task.completed",
+          taskId: "task-out-of-order-1",
+          correlationId: "task-out-of-order-1",
+          agentId: "agent-out-of-order",
+          sessionId: "session-out-of-order",
+          sender: "agent-out-of-order",
+          target: "workbench-test-harness",
+          attempt: 1,
+          payload: { output: "completed-first" },
+        })
+      );
+
+      await waitForEvent(events, (event) => event.taskId === "task-out-of-order-1" && event.eventType === "TASK_COMPLETED");
+
+      await harness.injectEnvelope(
+        createAHPTestEnvelope({
+          kind: "task.accept",
+          taskId: "task-out-of-order-1",
+          correlationId: "task-out-of-order-1",
+          agentId: "agent-out-of-order",
+          sessionId: "session-out-of-order",
+          sender: "agent-out-of-order",
+          target: "workbench-test-harness",
+          attempt: 1,
+          payload: { late: true },
+        })
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const taskEvents = events.filter((event) => event.taskId === "task-out-of-order-1");
+      expect(outbound?.correlationId).toBe("task-out-of-order-1");
+      expect(taskEvents.map((event) => event.eventType)).toEqual(["TASK_COMPLETED"]);
+      expect(taskEvents[0].sequence).toBe(1);
+    });
+
+    it("retries idempotent sends without double-invoking the agent handler", async () => {
+      const harness = await makeHarness({
+        timeouts: {
+          taskAckTimeoutMs: 20,
+          inactivityTimeoutMs: 100,
+          maxIdempotentRetries: 2,
+        },
+      });
+      const events: AHPTestEvent[] = [];
+      const invocations: string[] = [];
+
+      harness.maestro.onEvent((event) => events.push(event));
+      await harness.maestro.connect({ sessionId: "session-retry" });
+      await harness.maestro.registerAgent({
+        agentId: "agent-retry",
+        handler: (envelope) => {
+          invocations.push(envelope.messageId);
+        },
+      });
+
+      await harness.maestro.sendTask({
+        taskId: "task-retry-1",
+        agentId: "agent-retry",
+        prompt: "retry this",
+      });
+
+      const failure = await waitForEvent(
+        events,
+        (event) => event.taskId === "task-retry-1" && event.eventType === "TASK_FAILED",
+        700
+      );
+
+      expect(failure.error?.code).toBe("TASK_ACK_TIMEOUT");
+      expect(invocations).toHaveLength(1);
+
+      const sends = harness
+        .traceTask("task-retry-1")
+        .filter((entry) => entry.direction === "workbench->ahp" && entry.eventType === "task.send");
+
+      expect(sends).toHaveLength(3);
+    });
+  });
+}
