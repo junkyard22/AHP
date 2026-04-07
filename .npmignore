@@ -1,0 +1,8 @@
+src/
+examples/
+.github/
+*.test.ts
+vitest.config.ts
+tsconfig.json
+pnpm-lock.yaml
+.gitignore
