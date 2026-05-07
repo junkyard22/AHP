@@ -156,11 +156,11 @@ type AHPPacket = {
 ## Quick Start
 
 ```bash
-npm install @junkyard22/ahp
+npm install @marsulta/mailman
 ```
 
 ```typescript
-import { Runtime, createPacket } from "@junkyard22/ahp";
+import { Runtime, createPacket } from "@marsulta/mailman";
 
 const runtime = new Runtime();
 runtime.start();

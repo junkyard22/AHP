@@ -100,7 +100,7 @@ AHP is most powerful when it is not working alone:
 ## Getting Started
 
 ```bash
-npm install @junkyard22/ahp
+npm install @marsulta/mailman
 ```
 
 See [`AHP-SPEC.md`](./AHP-SPEC.md) for the full protocol specification and [`examples/`](./examples) for working implementations.
