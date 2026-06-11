@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use or reference the Agent Handoff Protocol, please cite it as below."
+title: "AHP: Agent Handoff Protocol"
+abstract: "A packet-based protocol for explicit agent task handoff, lifecycle state management, and completion reporting in multi-agent AI systems. Defines how work is handed off, tracked, constrained, and resolved between intelligent components."
+authors:
+  - family-names: "Yarber"
+    given-names: "James"
+    affiliation: "Yak Stacks LLC"
+type: software
+version: "1.0"
+doi: 10.5281/zenodo.20648981
+date-released: 2026-06-11
+repository-code: "https://github.com/junkyard22/AHP"
+license: Apache-2.0
+keywords:
+  - multi-agent systems
+  - agent orchestration
+  - task handoff
+  - protocol
+  - AI safety
