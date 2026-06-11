@@ -10,6 +10,9 @@ AHP is not an AI protocol. It is a **work protocol** that any intelligent system
 **Author:** James Yarber  
 **Status:** Specification complete — TypeScript implementation available
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20648981.svg)](https://doi.org/10.5281/zenodo.20648981)
+
+
 [![CI](https://github.com/junkyard22/AHP/actions/workflows/ci.yml/badge.svg)](https://github.com/junkyard22/AHP/actions)
 [![npm](https://img.shields.io/npm/v/@marsulta/mailman)](https://www.npmjs.com/package/@marsulta/mailman)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/junkyard22/AHP/blob/main/LICENSE)
