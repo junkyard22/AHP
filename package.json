@@ -33,7 +33,7 @@
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "clean": "rimraf dist",
-    "prepublishOnly": "pnpm run typecheck && pnpm run test && pnpm run build"
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
   },
   "keywords": [
     "agent",
@@ -49,7 +49,10 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/junkyard22/AHP.git"
+    "url": "git+https://github.com/junkyard22/AHP.git"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "homepage": "https://github.com/junkyard22/AHP#readme",
   "bugs": {
