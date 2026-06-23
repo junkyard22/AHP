@@ -5,6 +5,7 @@ abstract: "A packet-based protocol for explicit agent task handoff, lifecycle st
 authors:
   - family-names: "Yarber"
     given-names: "James"
+    orcid: "https://orcid.org/0009-0003-1242-8258"
     affiliation: "Yak Stacks LLC"
 type: software
 version: "1.0"
