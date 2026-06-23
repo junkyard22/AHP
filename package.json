@@ -57,10 +57,10 @@
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
-    "@vitest/coverage-v8": "^3.2.6",
+    "@vitest/coverage-v8": "^4.1.8",
     "rimraf": "^5.0.0",
     "typescript": "^5.4.0",
-    "vitest": "^3.2.6"
+    "vitest": "^4.1.8"
   },
   "dependencies": {
     "@types/uuid": "^9.0.0",
