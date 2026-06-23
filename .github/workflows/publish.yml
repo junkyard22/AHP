@@ -17,6 +17,12 @@ jobs:
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
+      - name: Remove deprecated npm auth config
+        shell: bash
+        run: |
+          if [ -n "${NPM_CONFIG_USERCONFIG:-}" ] && [ -f "$NPM_CONFIG_USERCONFIG" ]; then
+            sed -i '/^always-auth=/d' "$NPM_CONFIG_USERCONFIG"
+          fi
       - run: npm install -g npm@latest
       - run: npm ci
       - name: Check npm version
